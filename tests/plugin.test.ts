@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test"
-import { writeFile, readFile, rm } from "fs/promises"
+import { writeFile, readFile, rm, mkdir } from "fs/promises"
 import { join } from "path"
 import { homedir } from "os"
 
@@ -60,6 +60,7 @@ async function clearPluginConfig() {
 }
 
 async function writePluginConfig(baseURL: string) {
+  await mkdir(join(homedir(), ".config", "opencode"), { recursive: true })
   await writeFile(PLUGIN_CONFIG_PATH, JSON.stringify({ baseURL }, null, 2))
 }
 

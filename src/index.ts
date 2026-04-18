@@ -1,6 +1,7 @@
 import type { Plugin } from "@opencode-ai/plugin"
 import { tool } from "@opencode-ai/plugin"
-import { readFile, writeFile } from "fs/promises"
+import { mkdir, readFile, writeFile } from "fs/promises"
+import { dirname } from "path"
 import { join } from "path"
 import { homedir } from "os"
 
@@ -93,6 +94,7 @@ const plugin: Plugin = async (ctx) => {
         },
         execute: async ({ base_url }) => {
           const rootURL = base_url.replace(/\/v1\/?$/, "").replace(/\/$/, "")
+          await mkdir(dirname(PLUGIN_CONFIG_PATH), { recursive: true })
           await writeFile(
             PLUGIN_CONFIG_PATH,
             JSON.stringify({ baseURL: rootURL }, null, 2)

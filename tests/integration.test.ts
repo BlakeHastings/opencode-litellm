@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from "bun:test"
-import { writeFile, rm } from "fs/promises"
+import { writeFile, rm, mkdir } from "fs/promises"
 import { join } from "path"
 import { homedir } from "os"
 import { startMockLiteLLM, DEFAULT_MODELS } from "./fixtures/litellm-server"
@@ -40,6 +40,7 @@ async function clearPluginConfig() {
 }
 
 async function writePluginConfig(baseURL: string) {
+  await mkdir(join(homedir(), ".config", "opencode"), { recursive: true })
   await writeFile(PLUGIN_CONFIG_PATH, JSON.stringify({ baseURL }, null, 2))
 }
 
