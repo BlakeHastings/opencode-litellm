@@ -44,7 +44,10 @@ async function fetchModels(rootURL: string, apiKey: string): Promise<string[]> {
 
 const plugin: Plugin = async (ctx) => {
   return {
-    // Registers LiteLLM in /connect for API key entry.
+    // Registers "litellm" as a provider so it appears in the /connect UI.
+    provider: { id: "litellm" },
+
+    // Attaches auth methods to the litellm provider.
     auth: {
       provider: "litellm",
       loader: async (auth) => {
