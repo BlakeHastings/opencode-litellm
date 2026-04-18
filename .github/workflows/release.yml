@@ -2,18 +2,94 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
 
 jobs:
-  publish:
+  publish-prerelease:
+    name: Publish pre-release
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
+
+      - run: bun install
+
+      # Version: 0.1.0-pr.{pr_number}.{run_number}
+      - name: Set pre-release version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          PRERELEASE="${VERSION}-pr.${{ github.event.pull_request.number }}.${{ github.run_number }}"
+          npm version "$PRERELEASE" --no-git-tag-version
+          echo "PRERELEASE_VERSION=$PRERELEASE" >> $GITHUB_ENV
+
+      - name: Publish pre-release to npm
+        run: npm publish --access public --tag pr-${{ github.event.pull_request.number }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Comment pre-release version on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `📦 Pre-release published: \`opencode-litellm@${{ env.PRERELEASE_VERSION }}\`\n\nTest it with:\n\`\`\`json\n{ "plugin": ["opencode-litellm@pr-${{ github.event.pull_request.number }}"] }\n\`\`\``
+            })
+
+  integration-prerelease:
+    name: Integration test pre-release
+    runs-on: ubuntu-latest
+    needs: publish-prerelease
+    if: github.event_name == 'pull_request' && vars.LITELLM_URL != ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      # Install the published pre-release into a fresh OpenCode-like context
+      - name: Install pre-release plugin
+        run: |
+          mkdir -p test-install
+          cd test-install
+          npm init -y
+          npm install "opencode-litellm@pr-${{ github.event.pull_request.number }}" --save
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # Run the tests directly (already cover plugin loading + model discovery)
+      - name: Run integration tests against pre-release
+        run: bun test
+        env:
+          LITELLM_URL: ${{ vars.LITELLM_URL }}
+
+  publish-stable:
+    name: Publish stable release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - run: bun install
       - run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

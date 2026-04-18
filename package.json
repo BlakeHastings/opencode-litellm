@@ -6,11 +6,14 @@
   "main": "src/index.ts",
   "keywords": ["opencode", "litellm", "llm", "plugin"],
   "license": "MIT",
-  "peerDependencies": {
-    "@opencode-ai/plugin": "*"
+  "scripts": {
+    "test": "bun test",
+    "test:watch": "bun test --watch"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "1.4.7"
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "latest",
     "typescript": "^5"
   }
 }
