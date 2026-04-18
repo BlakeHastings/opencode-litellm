@@ -4,8 +4,6 @@ import { join } from "path"
 import { homedir } from "os"
 
 const PLUGIN_CONFIG_PATH = join(homedir(), ".config", "opencode", "litellm-plugin.json")
-const LITELLM_URL = process.env.LITELLM_URL ?? "http://localhost:4000"
-const runIntegration = process.env.LITELLM_URL !== undefined
 
 // Minimal PluginInput mock — only auth.get is exercised by the config hook
 function makeCtx(storedApiKey?: string) {
@@ -433,58 +431,4 @@ describe("config hook", () => {
   })
 })
 
-// ─── Integration: live LiteLLM ─────────────────────────────────────────────
-// Run with:  LITELLM_URL=http://your-litellm-host:4000 bun test
-
-if (runIntegration) {
-  describe("integration: live LiteLLM proxy", () => {
-    beforeEach(clearPluginConfig)
-    afterEach(clearPluginConfig)
-
-    test("proxy returns a non-empty model list", async () => {
-      const res = await fetch(`${LITELLM_URL}/v1/models`, {
-        signal: AbortSignal.timeout(5000),
-      })
-      expect(res.ok).toBe(true)
-
-      const body = (await res.json()) as any
-      expect(Array.isArray(body.data)).toBe(true)
-      expect(body.data.length).toBeGreaterThan(0)
-    })
-
-    test("config hook discovers and injects real models", async () => {
-      await writePluginConfig(LITELLM_URL)
-
-      const { default: plugin } = await import("../src/index.ts")
-      const hooks = await plugin(makeCtx())
-
-      const config: any = {}
-      await hooks.config!(config)
-
-      const models = config.provider?.litellm?.models ?? {}
-      expect(Object.keys(models).length).toBeGreaterThan(0)
-    })
-
-    test("/litellm-setup flow: tool saves URL, config hook discovers models", async () => {
-      const { default: plugin } = await import("../src/index.ts")
-      const hooks = await plugin(makeCtx())
-
-      // Step 1 — AI uses litellm_configure after user runs /litellm-setup
-      const toolResult = await hooks.tool!.litellm_configure.execute(
-        { base_url: LITELLM_URL },
-        mockToolCtx
-      )
-      expect(toolResult).toContain("saved")
-
-      const saved = await readPluginConfig()
-      expect(saved.baseURL).toBe(LITELLM_URL)
-
-      // Step 2 — OpenCode restarts, config hook discovers models
-      const config: any = {}
-      await hooks.config!(config)
-
-      expect(config.provider?.litellm?.models).toBeDefined()
-      expect(Object.keys(config.provider.litellm.models).length).toBeGreaterThan(0)
-    })
-  })
-}
+// Integration tests live in tests/integration.test.ts

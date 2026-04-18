@@ -6,24 +6,11 @@ on:
   pull_request:
 
 jobs:
-  unit:
-    name: Unit tests
+  test:
+    name: Unit & integration tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - run: bun install
       - run: bun test
-
-  integration:
-    name: Integration tests
-    runs-on: ubuntu-latest
-    # Only run if the LiteLLM secret is present (skip on forks)
-    if: vars.LITELLM_URL != ''
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install
-      - run: bun test
-        env:
-          LITELLM_URL: ${{ vars.LITELLM_URL }}
