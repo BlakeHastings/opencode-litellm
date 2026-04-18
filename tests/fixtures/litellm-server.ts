@@ -28,6 +28,8 @@ export interface MockServer {
   url: string
   /** The actual bound port number */
   port: number
+  /** Chat completion requests received, in order */
+  chatRequests: { model: string; messageCount: number }[]
   stop(): void
 }
 
@@ -37,6 +39,7 @@ export function startMockLiteLLM(options: MockServerOptions = {}): MockServer {
 
   // Captured after Bun.serve() returns; valid for all incoming requests.
   let boundPort = 0
+  const chatRequests: { model: string; messageCount: number }[] = []
 
   const server = Bun.serve({
     port: 0,
@@ -69,6 +72,7 @@ export function startMockLiteLLM(options: MockServerOptions = {}): MockServer {
         const body = (await req.json()) as { model?: string; messages?: { role: string }[] }
         const modelId = body.model ?? "mock-model"
         const messages = body.messages ?? []
+        chatRequests.push({ model: modelId, messageCount: messages.length })
         const hasToolResult = messages.some((m) => m.role === "tool")
         const isSetupModel = modelId === "test-model-setup"
 
@@ -109,6 +113,7 @@ export function startMockLiteLLM(options: MockServerOptions = {}): MockServer {
   return {
     url: `http://localhost:${server.port}`,
     port: server.port,
+    chatRequests,
     stop: () => server.stop(),
   }
 }

@@ -73,16 +73,20 @@ try {
   // ── Flow B: model routing ─────────────────────────────────────────────────
   console.log("Flow B: model routing (mock returns plain text)...")
 
+  const chatRequestsBefore = mock.chatRequests.length
+
   const b = runOpenCode([
     "run",
     "--model", "litellm/test-model-chat",
     "say hello",
   ])
   assert(b.ok, `opencode run exited ${b.code}:\n${b.stderr}`)
-  assert(
-    b.stdout.includes("mock LiteLLM"),
-    `Expected "mock LiteLLM" in stdout.\n  stdout: ${b.stdout}`
-  )
+
+  // opencode run renders to the terminal, not stdout when piped — assert
+  // on the mock's request log instead: the request must have reached the mock.
+  const newRequests = mock.chatRequests.slice(chatRequestsBefore)
+  const chatHit = newRequests.some((r) => r.model === "test-model-chat")
+  assert(chatHit, `No chat completion request for test-model-chat reached the mock.\n  requests: ${JSON.stringify(newRequests)}`)
   console.log("Flow B: PASSED\n")
 
 } finally {
