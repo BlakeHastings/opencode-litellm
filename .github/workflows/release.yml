@@ -5,12 +5,25 @@ on:
     branches: [main, master]
     tags: ["v*"]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      publish_type:
+        description: "What to publish"
+        required: true
+        type: choice
+        options:
+          - prerelease
+          - stable
+      pr_number:
+        description: "PR number (required when publishing a prerelease manually)"
+        required: false
+        type: string
 
 jobs:
   publish-prerelease:
     name: Publish pre-release
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.publish_type == 'prerelease')
     permissions:
       contents: read
       pull-requests: write
@@ -28,16 +41,19 @@ jobs:
       - name: Set pre-release version
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          PRERELEASE="${VERSION}-pr.${{ github.event.pull_request.number }}.${{ github.run_number }}"
+          PR_NUMBER=${{ github.event.pull_request.number || inputs.pr_number }}
+          PRERELEASE="${VERSION}-pr.${PR_NUMBER}.${{ github.run_number }}"
           npm version "$PRERELEASE" --no-git-tag-version
           echo "PRERELEASE_VERSION=$PRERELEASE" >> $GITHUB_ENV
+          echo "PR_NUMBER=${PR_NUMBER}" >> $GITHUB_ENV
 
       - name: Publish pre-release to npm
-        run: npm publish --access public --tag pr-${{ github.event.pull_request.number }}
+        run: npm publish --access public --tag pr-${{ env.PR_NUMBER }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Comment pre-release version on PR
+        if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
@@ -45,14 +61,14 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `📦 Pre-release published: \`opencode-litellm@${{ env.PRERELEASE_VERSION }}\`\n\nTest it with:\n\`\`\`json\n{ "plugin": ["opencode-litellm@pr-${{ github.event.pull_request.number }}"] }\n\`\`\``
+              body: `📦 Pre-release published: \`opencode-litellm@${{ env.PRERELEASE_VERSION }}\`\n\nTest it with:\n\`\`\`json\n{ "plugin": ["opencode-litellm@pr-${{ env.PR_NUMBER }}"] }\n\`\`\``
             })
 
   integration-prerelease:
     name: Integration test pre-release
     runs-on: ubuntu-latest
     needs: publish-prerelease
-    if: github.event_name == 'pull_request' && vars.LITELLM_URL != ''
+    if: (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.publish_type == 'prerelease')) && vars.LITELLM_URL != ''
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -67,7 +83,7 @@ jobs:
           mkdir -p test-install
           cd test-install
           npm init -y
-          npm install "opencode-litellm@pr-${{ github.event.pull_request.number }}" --save
+          npm install "opencode-litellm@pr-${{ env.PR_NUMBER }}" --save
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -80,7 +96,7 @@ jobs:
   publish-stable:
     name: Publish stable release
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish_type == 'stable')
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
