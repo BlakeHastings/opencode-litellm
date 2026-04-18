@@ -48,7 +48,8 @@ const plugin: Plugin = async (ctx) => {
     auth: {
       provider: "litellm",
       loader: async (auth) => {
-        const stored = await auth()
+        let stored: unknown = null
+        try { stored = await auth() } catch { /* no credential stored yet */ }
         const cfg = await readPluginConfig()
         const rootURL = cfg.baseURL ?? "http://localhost:4000"
         const apiKey = (stored as any)?.key ?? ""
