@@ -88,7 +88,7 @@ const plugin: Plugin = async (ctx) => {
           base_url: tool.schema
             .string()
             .describe(
-              "The LiteLLM proxy base URL, e.g. http://localhost:4000 or http://192.168.0.52:4000"
+              "The LiteLLM proxy base URL, e.g. http://localhost:4000 or http://your-server:4000"
             ),
         },
         execute: async ({ base_url }) => {

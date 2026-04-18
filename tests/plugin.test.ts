@@ -4,7 +4,7 @@ import { join } from "path"
 import { homedir } from "os"
 
 const PLUGIN_CONFIG_PATH = join(homedir(), ".config", "opencode", "litellm-plugin.json")
-const LITELLM_URL = process.env.LITELLM_URL ?? "http://192.168.0.52:4000"
+const LITELLM_URL = process.env.LITELLM_URL ?? "http://localhost:4000"
 const runIntegration = process.env.LITELLM_URL !== undefined
 
 // Minimal PluginInput mock — only auth.get is exercised by the config hook
@@ -434,7 +434,7 @@ describe("config hook", () => {
 })
 
 // ─── Integration: live LiteLLM ─────────────────────────────────────────────
-// Run with:  LITELLM_URL=http://192.168.0.52:4000 bun test
+// Run with:  LITELLM_URL=http://your-litellm-host:4000 bun test
 
 if (runIntegration) {
   describe("integration: live LiteLLM proxy", () => {
