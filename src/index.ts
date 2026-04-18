@@ -100,9 +100,11 @@ const plugin: Plugin = async (ctx) => {
             JSON.stringify({ baseURL: rootURL }, null, 2)
           )
           return (
-            `LiteLLM URL saved: ${rootURL}\n\n` +
-            `If your proxy requires an API key, run /connect litellm to add it.\n` +
-            `Otherwise, restart OpenCode and your models will be available automatically.`
+            `LiteLLM proxy URL saved: ${rootURL}\n\n` +
+            `Next steps:\n` +
+            `1. If your proxy requires an API key: run /connect litellm and enter your key.\n` +
+            `2. If your proxy has no authentication: skip step 1.\n` +
+            `3. Restart OpenCode — your LiteLLM models will appear in the model picker automatically.`
           )
         },
       }),
@@ -113,7 +115,7 @@ const plugin: Plugin = async (ctx) => {
       config.command ??= {}
       config.command["litellm-setup"] = {
         template:
-          "I want to configure my LiteLLM proxy. Please ask me for the URL of my LiteLLM instance, then use the litellm_configure tool to save it.",
+          "I want to configure my LiteLLM proxy. Please ask me for the URL of my LiteLLM instance, then use the litellm_configure tool to save it. After the tool runs, relay its output to me word for word — do not summarize it.",
         description: "Configure your LiteLLM proxy URL",
       }
 
