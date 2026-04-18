@@ -1,4 +1,5 @@
 import type { Plugin } from "@opencode-ai/plugin"
+import { tool } from "@opencode-ai/plugin"
 import { readFile, writeFile } from "fs/promises"
 import { join } from "path"
 import { homedir } from "os"
@@ -41,56 +42,106 @@ async function fetchModels(rootURL: string, apiKey: string): Promise<string[]> {
 }
 
 const plugin: Plugin = async (ctx) => {
-  const setupScriptPath = join(import.meta.dir, "setup.ts")
-
   return {
-    // Registers "LiteLLM" in OpenCode's /connect provider list for API key entry.
+    // Registers LiteLLM in /connect for API key entry.
     auth: {
       provider: "litellm",
-      loader: async (credentials) => ({
-        apiKey: (credentials as Record<string, string>).apiKey ?? "",
-      }),
-      methods: {
-        api: {
-          authorize: async (key: string) => key,
-        },
+      loader: async (auth) => {
+        const stored = await auth()
+        const cfg = await readPluginConfig()
+        const rootURL = cfg.baseURL ?? "http://localhost:4000"
+        const apiKey = (stored as any)?.key ?? ""
+        return {
+          apiKey: apiKey === "no-key" ? "" : apiKey,
+          baseURL: `${rootURL}/v1`,
+        }
       },
+      methods: [
+        {
+          type: "api" as const,
+          label: "Connect to LiteLLM",
+          prompts: [
+            {
+              type: "text" as const,
+              key: "apiKey",
+              message: "API key (leave blank if your proxy has no authentication)",
+              placeholder: "",
+            },
+          ],
+          authorize: async (inputs) => {
+            const apiKey = inputs?.apiKey ?? ""
+            return {
+              type: "success" as const,
+              key: apiKey || "no-key",
+            }
+          },
+        },
+      ],
+    },
+
+    // litellm_configure is called by the AI during /litellm-setup to save the proxy URL.
+    tool: {
+      litellm_configure: tool({
+        description:
+          "Save the LiteLLM proxy base URL so the opencode-litellm plugin can discover models automatically. Call this when the user wants to configure their LiteLLM connection.",
+        args: {
+          base_url: tool.schema
+            .string()
+            .describe(
+              "The LiteLLM proxy base URL, e.g. http://localhost:4000 or http://192.168.0.52:4000"
+            ),
+        },
+        execute: async ({ base_url }) => {
+          const rootURL = base_url.replace(/\/v1\/?$/, "").replace(/\/$/, "")
+          await writeFile(
+            PLUGIN_CONFIG_PATH,
+            JSON.stringify({ baseURL: rootURL }, null, 2)
+          )
+          return (
+            `LiteLLM URL saved: ${rootURL}\n\n` +
+            `If your proxy requires an API key, run /connect litellm to add it.\n` +
+            `Otherwise, restart OpenCode and your models will be available automatically.`
+          )
+        },
+      }),
     },
 
     config: async (config) => {
-      // Inject /litellm-setup slash command so users can configure their URL
-      // without touching any config files.
-      const cfg = config as Record<string, any>
-      cfg.command ??= {}
-      cfg.command["litellm-setup"] = {
-        description:
-          "Set your LiteLLM proxy URL  —  usage: /litellm-setup http://host:4000",
-        run: `bun run "${setupScriptPath}"`,
+      // Inject /litellm-setup as a guided setup command.
+      config.command ??= {}
+      config.command["litellm-setup"] = {
+        template:
+          "I want to configure my LiteLLM proxy. Please ask me for the URL of my LiteLLM instance, then use the litellm_configure tool to save it.",
+        description: "Configure your LiteLLM proxy URL",
       }
 
-      // Read base URL saved by /litellm-setup (falls back to localhost)
+      // Read saved base URL (written by litellm_configure tool).
       const saved = await readPluginConfig()
-      const rootURL = saved.baseURL ?? "http://localhost:4000"
+      if (!saved.baseURL) return  // Not configured yet — nothing to inject.
 
-      // Read API key from OpenCode's auth store (set via /connect litellm)
+      const rootURL = saved.baseURL
+
+      // Read API key stored via /connect litellm.
       let apiKey = ""
       try {
-        const stored = await (ctx.client as any).auth?.get?.("litellm")
-        apiKey = (stored as Record<string, string>)?.apiKey ?? ""
+        const stored = (await (ctx.client as any).auth?.get?.("litellm")) as
+          | { key?: string }
+          | undefined
+        const key = stored?.key ?? ""
+        apiKey = key === "no-key" ? "" : key
       } catch {
         // auth store unavailable — proceed without key
       }
 
-      // Discover models — fail silently so OpenCode still starts if LiteLLM is down
       let modelIds: string[]
       try {
         modelIds = await fetchModels(rootURL, apiKey)
       } catch {
-        return config
+        return  // LiteLLM unreachable — don't break OpenCode startup
       }
 
-      cfg.provider ??= {}
-      cfg.provider.litellm = {
+      config.provider ??= {}
+      config.provider.litellm = {
         npm: "@ai-sdk/openai-compatible",
         name: "LiteLLM",
         options: {
@@ -101,8 +152,6 @@ const plugin: Plugin = async (ctx) => {
           modelIds.map((id) => [id, { id, name: id }])
         ),
       }
-
-      return config
     },
   }
 }
