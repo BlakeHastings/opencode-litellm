@@ -1,0 +1,16 @@
+{
+  "name": "opencode-litellm",
+  "version": "0.1.0",
+  "description": "OpenCode plugin that auto-discovers models from a LiteLLM proxy",
+  "type": "module",
+  "main": "src/index.ts",
+  "keywords": ["opencode", "litellm", "llm", "plugin"],
+  "license": "MIT",
+  "peerDependencies": {
+    "@opencode-ai/plugin": "*"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "latest",
+    "typescript": "^5"
+  }
+}
