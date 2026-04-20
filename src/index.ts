@@ -160,7 +160,7 @@ const plugin: Plugin = async (ctx) => {
     },
 
     "chat.params": async (input, output) => {
-      if (input.provider.info.id !== "litellm") return
+      if (input?.provider?.info?.id !== "litellm") return
       const existingMeta = (output.options?.metadata as Record<string, unknown> | undefined) ?? {}
       output.options = {
         ...output.options,
