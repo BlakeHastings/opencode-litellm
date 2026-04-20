@@ -160,13 +160,27 @@ const plugin: Plugin = async (ctx) => {
     },
 
     "chat.params": async (input, output) => {
+      // @ai-sdk/openai-compatible drops unknown top-level keys in options. The
+      // only escape hatch it honors is `providerOptions[<providerName>]`, which
+      // it spreads as top-level fields into the request body. LiteLLM's session
+      // UI reads `litellm_session_id` as a top-level body field — so we nest it
+      // under providerOptions.litellm to survive the SDK's filter.
+      // Refs: https://ai-sdk.dev/providers/openai-compatible-providers
+      //       https://docs.litellm.ai/docs/proxy/ui_logs_sessions
       if (input?.provider?.info?.id !== "litellm") return
-      const existingMeta = (output.options?.metadata as Record<string, unknown> | undefined) ?? {}
+      const existing = (output.options?.providerOptions as Record<string, any> | undefined) ?? {}
+      const existingForProvider = (existing.litellm as Record<string, unknown> | undefined) ?? {}
       output.options = {
         ...output.options,
-        metadata: { ...existingMeta, session_id: input.sessionID },
+        providerOptions: {
+          ...existing,
+          litellm: {
+            ...existingForProvider,
+            litellm_session_id: input.sessionID,
+          },
+        },
       }
-      log(`chat.params: tagged session_id=${input.sessionID}`)
+      log(`chat.params: tagged litellm_session_id=${input.sessionID}`)
     },
 
     config: async (config) => {

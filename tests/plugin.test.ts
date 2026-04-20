@@ -496,7 +496,7 @@ function makeChatParamsInput(providerID: string, sessionID = "ses_01TESTID") {
 }
 
 describe("chat.params hook", () => {
-  test("sets metadata.session_id to sessionID for litellm provider", async () => {
+  test("sets providerOptions.litellm.litellm_session_id for litellm provider", async () => {
     const { default: plugin } = await import("../src/index.ts")
     const hooks = await plugin(makeCtx())
 
@@ -505,7 +505,7 @@ describe("chat.params hook", () => {
 
     await hooks["chat.params"]!(input, output)
 
-    expect(output.options.metadata.session_id).toBe("ses_abc123")
+    expect(output.options.providerOptions.litellm.litellm_session_id).toBe("ses_abc123")
   })
 
   test("is a no-op for non-litellm providers", async () => {
@@ -517,26 +517,26 @@ describe("chat.params hook", () => {
 
     await hooks["chat.params"]!(input, output)
 
-    expect(output.options.metadata).toBeUndefined()
+    expect(output.options.providerOptions).toBeUndefined()
   })
 
-  test("preserves existing metadata keys alongside session_id", async () => {
+  test("preserves existing providerOptions.litellm keys alongside session_id", async () => {
     const { default: plugin } = await import("../src/index.ts")
     const hooks = await plugin(makeCtx())
 
     const input = makeChatParamsInput("litellm", "ses_xyz")
     const output: any = {
       temperature: 1, topP: 1, topK: 40, maxOutputTokens: undefined,
-      options: { metadata: { trace_id: "existing-trace" } },
+      options: { providerOptions: { litellm: { trace_id: "existing-trace" } } },
     }
 
     await hooks["chat.params"]!(input, output)
 
-    expect(output.options.metadata.trace_id).toBe("existing-trace")
-    expect(output.options.metadata.session_id).toBe("ses_xyz")
+    expect(output.options.providerOptions.litellm.trace_id).toBe("existing-trace")
+    expect(output.options.providerOptions.litellm.litellm_session_id).toBe("ses_xyz")
   })
 
-  test("preserves existing non-metadata options keys", async () => {
+  test("preserves existing options keys outside providerOptions", async () => {
     const { default: plugin } = await import("../src/index.ts")
     const hooks = await plugin(makeCtx())
 
@@ -549,7 +549,7 @@ describe("chat.params hook", () => {
     await hooks["chat.params"]!(input, output)
 
     expect(output.options.user).toBe("user-123")
-    expect(output.options.metadata.session_id).toBe("ses_xyz")
+    expect(output.options.providerOptions.litellm.litellm_session_id).toBe("ses_xyz")
   })
 
   test("emits a log line containing the session_id", async () => {
