@@ -4,13 +4,11 @@ OpenCode plugin that auto-discovers models from a [LiteLLM](https://litellm.ai) 
 
 ## Install
 
-Add to your `~/.config/opencode/opencode.json`:
-
-```json
-{
-  "plugin": ["opencode-litellm"]
-}
+```bash
+opencode plugin opencode-litellm --global
 ```
+
+This registers the plugin in `~/.config/opencode/opencode.json` for you. Omit `--global` to install it only in the current project. Pass `--force` to replace an existing pinned version.
 
 ## Setup
 
