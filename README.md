@@ -14,18 +14,19 @@ Add to your `~/.config/opencode/opencode.json`:
 
 ## Setup
 
-1. Open OpenCode and run `/connect litellm`.
-2. Enter your LiteLLM proxy URL (e.g., `http://localhost:4000`).
-3. Enter your API key (skip/leave blank if your proxy has no authentication).
-4. Restart OpenCode — your LiteLLM models will appear in the model picker automatically.
+1. Open OpenCode and run `/connect`.
+2. Select **LiteLLM** from the provider list.
+3. Enter your LiteLLM proxy base URL (e.g., `http://localhost:4000`).
+4. Enter your API key when prompted (leave blank if your proxy has no authentication).
+5. Restart OpenCode — your LiteLLM models will appear in the model picker automatically.
 
 ## How it works
 
 On every startup the plugin calls `GET /v1/models` on your LiteLLM proxy and injects the results as an OpenAI-compatible provider into OpenCode's runtime config. Models appear in the model picker using the IDs returned by your proxy (e.g. `claude-sonnet`, `deepseek-coder-v2`).
 
-If the proxy is unreachable or the API key is missing, the plugin silently does nothing so OpenCode starts cleanly.
+If the proxy is unreachable or the API key is missing, the plugin falls back to a placeholder entry so OpenCode starts cleanly and `/connect` still lists LiteLLM.
 
-Each request also carries OpenCode's session ID as `metadata.session_id` in the request body, so the LiteLLM Admin UI groups all turns in one OpenCode chat into a single session. A new chat session produces a different ID.
+Each request also carries OpenCode's session ID as a top-level `litellm_session_id` field in the request body, so the LiteLLM Admin UI groups every turn of one OpenCode chat into a single session. A new chat session produces a different ID.
 
 ## Development
 
