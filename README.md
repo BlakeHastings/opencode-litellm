@@ -25,6 +25,8 @@ On every startup the plugin calls `GET /v1/models` on your LiteLLM proxy and inj
 
 If the proxy is unreachable or the API key is missing, the plugin silently does nothing so OpenCode starts cleanly.
 
+Each request also carries OpenCode's session ID as `metadata.session_id` in the request body, so the LiteLLM Admin UI groups all turns in one OpenCode chat into a single session. A new chat session produces a different ID.
+
 ## Development
 
 ### Prerequisites
@@ -70,7 +72,7 @@ bun test --testNamePattern "config hook"   # filter by name
 ### Project structure
 
 ```
-src/index.ts                      # plugin — auth, tool, and config hooks
+src/index.ts                      # plugin — auth, config, and chat.params hooks
 .opencode/opencode.json           # loads plugin from ../src/index.ts for development
 tests/plugin.test.ts              # unit tests (mocked fetch)
 tests/integration.test.ts         # integration tests (real in-process mock server)
