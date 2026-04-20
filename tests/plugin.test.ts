@@ -1,17 +1,21 @@
-import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test"
+import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach, mock } from "bun:test"
 import { writeFile, readFile, rm, mkdir } from "fs/promises"
-import { join } from "path"
+import { join, dirname } from "path"
 import { homedir } from "os"
 
-const PLUGIN_CONFIG_PATH = join(homedir(), ".config", "opencode", "litellm-plugin.json")
+const OPENCODE_CONFIG_PATH = join(homedir(), ".config", "opencode", "opencode.json")
+const AUTH_STORE_PATH = join(homedir(), ".local", "share", "opencode", "auth.json")
 
-// Minimal PluginInput mock — only auth.get is exercised by the config hook
+// Minimal PluginInput mock
 function makeCtx(storedApiKey?: string) {
   return {
     client: {
       auth: {
         get: async (_provider: string) =>
           storedApiKey ? { key: storedApiKey } : null,
+      },
+      app: {
+        log: mock(() => Promise.resolve()),
       },
     },
     project: { id: "test", path: "/test" },
@@ -22,18 +26,6 @@ function makeCtx(storedApiKey?: string) {
     $: {} as any,
   } as any
 }
-
-// litellm_configure doesn't use any ToolContext fields
-const mockToolCtx = {
-  sessionID: "test-session",
-  messageID: "test-message",
-  agent: "general",
-  directory: "/test",
-  worktree: "/test",
-  abort: new AbortController().signal,
-  metadata: () => {},
-  ask: () => ({ pipe: () => {} }) as any,
-} as any
 
 // Fake model list returned by mocked fetch
 const MOCK_MODEL_IDS = ["mock-model-a", "mock-model-b", "mock-model-c"]
@@ -55,29 +47,44 @@ function mockFetchFailure() {
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
-async function clearPluginConfig() {
-  try { await rm(PLUGIN_CONFIG_PATH) } catch { /* file may not exist */ }
+async function clearOpencodeConfig() {
+  try { await rm(OPENCODE_CONFIG_PATH) } catch { /* may not exist */ }
 }
 
-async function writePluginConfig(baseURL: string) {
+async function clearAuthJson() {
+  try { await rm(AUTH_STORE_PATH) } catch { /* may not exist */ }
+}
+
+async function writeOpencodeConfig(cfg: Record<string, unknown>) {
   await mkdir(join(homedir(), ".config", "opencode"), { recursive: true })
-  await writeFile(PLUGIN_CONFIG_PATH, JSON.stringify({ baseURL }, null, 2))
+  await writeFile(OPENCODE_CONFIG_PATH, JSON.stringify(cfg, null, 2))
 }
 
-async function readPluginConfig() {
-  return JSON.parse(await readFile(PLUGIN_CONFIG_PATH, "utf8"))
+async function writeAuthJson(auth: Record<string, unknown>) {
+  await mkdir(join(homedir(), ".local", "share", "opencode"), { recursive: true })
+  await writeFile(AUTH_STORE_PATH, JSON.stringify(auth, null, 2))
+}
+
+async function readOpencodeConfig() {
+  return JSON.parse(await readFile(OPENCODE_CONFIG_PATH, "utf8"))
+}
+
+async function readAuthJson() {
+  return JSON.parse(await readFile(AUTH_STORE_PATH, "utf8"))
 }
 
 // ─── Plugin structure ──────────────────────────────────────────────────────
 
 describe("plugin structure", () => {
-  test("loads and returns auth, tool, and config hooks", async () => {
+  test("loads and returns auth, config, and chat.params hooks", async () => {
     const { default: plugin } = await import("../src/index.ts")
     const hooks = await plugin(makeCtx())
 
     expect(hooks.auth).toBeDefined()
-    expect(hooks.tool).toBeDefined()
     expect(hooks.config).toBeDefined()
+    expect(hooks["chat.params"]).toBeDefined()
+    expect(hooks.tool).toBeUndefined()
+    expect(hooks.command).toBeUndefined()
   })
 
   test("auth hook targets the litellm provider", async () => {
@@ -87,174 +94,144 @@ describe("plugin structure", () => {
     expect(hooks.auth?.provider).toBe("litellm")
   })
 
-  test("auth method is api type", async () => {
+  test("auth has exactly one api-type method", async () => {
     const { default: plugin } = await import("../src/index.ts")
     const hooks = await plugin(makeCtx())
 
+    expect(hooks.auth?.methods).toBeDefined()
+    expect(hooks.auth?.methods.length).toBe(1)
     const method = hooks.auth?.methods[0] as any
     expect(method?.type).toBe("api")
   })
 
-  test("auth method prompts include apiKey field", async () => {
+  test("auth method has a baseURL prompt (key is collected by OpenCode's built-in API key prompt)", async () => {
     const { default: plugin } = await import("../src/index.ts")
     const hooks = await plugin(makeCtx())
 
     const method = hooks.auth?.methods[0] as any
-    const keys = (method?.prompts ?? []).map((p: any) => p.key)
-    expect(keys).toContain("apiKey")
+    const prompts = method?.prompts ?? []
+    expect(prompts.length).toBe(1)
+    expect(prompts[0].key).toBe("baseURL")
   })
 
-  test("tool hook exposes litellm_configure", async () => {
+  test("auth method has authorize function", async () => {
     const { default: plugin } = await import("../src/index.ts")
     const hooks = await plugin(makeCtx())
 
-    expect(hooks.tool?.litellm_configure).toBeDefined()
-    expect(typeof hooks.tool?.litellm_configure.execute).toBe("function")
+    const method = hooks.auth?.methods[0] as any
+    expect(typeof method?.authorize).toBe("function")
   })
 })
 
 // ─── Auth: authorize ───────────────────────────────────────────────────────
 
 describe("auth authorize", () => {
-  test("returns success with provided API key", async () => {
-    const { default: plugin } = await import("../src/index.ts")
-    const hooks = await plugin(makeCtx())
-    const method = hooks.auth?.methods[0] as any
+  let backupOpencodeConfig: string | undefined
+  let backupAuthJson: string | undefined
 
-    const result = await method.authorize({ apiKey: "sk-test-key" })
-    expect(result.type).toBe("success")
-    expect(result.key).toBe("sk-test-key")
+  beforeAll(async () => {
+    try { backupOpencodeConfig = await readFile(OPENCODE_CONFIG_PATH, "utf8") } catch { /* not present */ }
+    try { backupAuthJson = await readFile(AUTH_STORE_PATH, "utf8") } catch { /* not present */ }
   })
 
-  test("stores no-key sentinel when API key is blank", async () => {
+  afterAll(async () => {
+    if (backupOpencodeConfig) {
+      await mkdir(dirname(OPENCODE_CONFIG_PATH), { recursive: true })
+      await writeFile(OPENCODE_CONFIG_PATH, backupOpencodeConfig)
+    } else {
+      await clearOpencodeConfig()
+    }
+
+    if (backupAuthJson) {
+      await mkdir(dirname(AUTH_STORE_PATH), { recursive: true })
+      await writeFile(AUTH_STORE_PATH, backupAuthJson)
+    } else {
+      await clearAuthJson()
+    }
+  })
+
+  beforeEach(clearOpencodeConfig)
+  afterEach(clearOpencodeConfig)
+
+  test("authorize with baseURL and apiKey writes opencode.json and returns success with key", async () => {
     const { default: plugin } = await import("../src/index.ts")
     const hooks = await plugin(makeCtx())
     const method = hooks.auth?.methods[0] as any
 
-    const result = await method.authorize({ apiKey: "" })
+    const result = await method.authorize({
+      baseURL: "http://my-host:4000/v1",
+      key: "sk-x",
+    })
+
+    expect(result.type).toBe("success")
+    expect(result.key).toBe("sk-x")
+
+    const cfg = await readOpencodeConfig()
+    expect(cfg.provider?.litellm?.options?.baseURL).toBe("http://my-host:4000/v1")
+  })
+
+  test("authorize strips /v1 suffix when saving baseURL", async () => {
+    const { default: plugin } = await import("../src/index.ts")
+    const hooks = await plugin(makeCtx())
+    const method = hooks.auth?.methods[0] as any
+
+    await method.authorize({
+      baseURL: "http://my-host:4000/v1",
+      key: "sk-x",
+    })
+
+    const cfg = await readOpencodeConfig()
+    expect(cfg.provider?.litellm?.options?.baseURL).toBe("http://my-host:4000/v1")
+  })
+
+  test("authorize with no apiKey returns no-key sentinel", async () => {
+    const { default: plugin } = await import("../src/index.ts")
+    const hooks = await plugin(makeCtx())
+    const method = hooks.auth?.methods[0] as any
+
+    const result = await method.authorize({ baseURL: "http://my-host:4000" })
+
     expect(result.type).toBe("success")
     expect(result.key).toBe("no-key")
   })
 
-  test("stores no-key sentinel when apiKey input is absent", async () => {
+  test("authorize with blank baseURL defaults to localhost:4000", async () => {
     const { default: plugin } = await import("../src/index.ts")
     const hooks = await plugin(makeCtx())
     const method = hooks.auth?.methods[0] as any
 
-    const result = await method.authorize({})
+    const result = await method.authorize({ baseURL: "" })
+
     expect(result.type).toBe("success")
-    expect(result.key).toBe("no-key")
-  })
-})
 
-// ─── Tool: litellm_configure ───────────────────────────────────────────────
-
-describe("litellm_configure tool", () => {
-  beforeEach(clearPluginConfig)
-  afterEach(clearPluginConfig)
-
-  test("saves base URL verbatim", async () => {
-    const { default: plugin } = await import("../src/index.ts")
-    const { tool: tools } = await plugin(makeCtx())
-
-    await tools!.litellm_configure.execute(
-      { base_url: "http://my-host:4000" },
-      mockToolCtx
-    )
-
-    const saved = await readPluginConfig()
-    expect(saved.baseURL).toBe("http://my-host:4000")
+    const cfg = await readOpencodeConfig()
+    expect(cfg.provider?.litellm?.options?.baseURL).toBe("http://localhost:4000/v1")
   })
 
-  test("strips /v1 suffix from URL", async () => {
-    const { default: plugin } = await import("../src/index.ts")
-    const { tool: tools } = await plugin(makeCtx())
-
-    await tools!.litellm_configure.execute(
-      { base_url: "http://my-host:4000/v1" },
-      mockToolCtx
-    )
-
-    const saved = await readPluginConfig()
-    expect(saved.baseURL).toBe("http://my-host:4000")
-  })
-
-  test("strips trailing slash from URL", async () => {
-    const { default: plugin } = await import("../src/index.ts")
-    const { tool: tools } = await plugin(makeCtx())
-
-    await tools!.litellm_configure.execute(
-      { base_url: "http://my-host:4000/" },
-      mockToolCtx
-    )
-
-    const saved = await readPluginConfig()
-    expect(saved.baseURL).toBe("http://my-host:4000")
-  })
-
-  test("strips /v1/ with trailing slash", async () => {
-    const { default: plugin } = await import("../src/index.ts")
-    const { tool: tools } = await plugin(makeCtx())
-
-    await tools!.litellm_configure.execute(
-      { base_url: "http://my-host:4000/v1/" },
-      mockToolCtx
-    )
-
-    const saved = await readPluginConfig()
-    expect(saved.baseURL).toBe("http://my-host:4000")
-  })
-
-  test("writes valid JSON to the config file", async () => {
-    const { default: plugin } = await import("../src/index.ts")
-    const { tool: tools } = await plugin(makeCtx())
-
-    await tools!.litellm_configure.execute(
-      { base_url: "http://my-host:4000" },
-      mockToolCtx
-    )
-
-    const raw = await readFile(PLUGIN_CONFIG_PATH, "utf8")
-    expect(() => JSON.parse(raw)).not.toThrow()
-  })
-
-  test("result message includes the saved URL", async () => {
-    const { default: plugin } = await import("../src/index.ts")
-    const { tool: tools } = await plugin(makeCtx())
-
-    const result = await tools!.litellm_configure.execute(
-      { base_url: "http://my-host:4000" },
-      mockToolCtx
-    )
-
-    expect(result).toContain("my-host:4000")
-  })
-
-  test("result message instructs user to run /connect litellm", async () => {
-    const { default: plugin } = await import("../src/index.ts")
-    const { tool: tools } = await plugin(makeCtx())
-
-    const result = await tools!.litellm_configure.execute(
-      { base_url: "http://my-host:4000" },
-      mockToolCtx
-    )
-
-    expect(result).toContain("/connect litellm")
-  })
-
-  test("overwrites an existing config file", async () => {
-    await writePluginConfig("http://old-host:4000")
+  test("authorize preserves other keys in opencode.json", async () => {
+    const existing = {
+      $schema: "https://example.com",
+      other: "value",
+      provider: {
+        openai: { name: "OpenAI" },
+      },
+    }
+    await writeOpencodeConfig(existing)
 
     const { default: plugin } = await import("../src/index.ts")
-    const { tool: tools } = await plugin(makeCtx())
+    const hooks = await plugin(makeCtx())
+    const method = hooks.auth?.methods[0] as any
 
-    await tools!.litellm_configure.execute(
-      { base_url: "http://new-host:4000" },
-      mockToolCtx
-    )
+    await method.authorize({
+      baseURL: "http://my-host:4000",
+      key: "sk-test",
+    })
 
-    const saved = await readPluginConfig()
-    expect(saved.baseURL).toBe("http://new-host:4000")
+    const cfg = await readOpencodeConfig()
+    expect(cfg.$schema).toBe("https://example.com")
+    expect(cfg.other).toBe("value")
+    expect(cfg.provider?.openai?.name).toBe("OpenAI")
+    expect(cfg.provider?.litellm).toBeDefined()
   })
 })
 
@@ -262,57 +239,78 @@ describe("litellm_configure tool", () => {
 
 describe("config hook", () => {
   let restoreFetch: (() => void) | undefined
+  let backupOpencodeConfig: string | undefined
+  let backupAuthJson: string | undefined
 
-  beforeEach(clearPluginConfig)
+  beforeAll(async () => {
+    // Back up real files if they exist
+    try {
+      backupOpencodeConfig = await readFile(OPENCODE_CONFIG_PATH, "utf8")
+    } catch { /* doesn't exist */ }
+
+    try {
+      backupAuthJson = await readFile(AUTH_STORE_PATH, "utf8")
+    } catch { /* doesn't exist */ }
+  })
+
+  afterAll(async () => {
+    // Restore real files
+    if (backupOpencodeConfig) {
+      await mkdir(dirname(OPENCODE_CONFIG_PATH), { recursive: true })
+      await writeFile(OPENCODE_CONFIG_PATH, backupOpencodeConfig)
+    } else {
+      await clearOpencodeConfig()
+    }
+
+    if (backupAuthJson) {
+      await mkdir(dirname(AUTH_STORE_PATH), { recursive: true })
+      await writeFile(AUTH_STORE_PATH, backupAuthJson)
+    } else {
+      await clearAuthJson()
+    }
+  })
+
+  beforeEach(async () => {
+    await clearOpencodeConfig()
+    await clearAuthJson()
+  })
 
   afterEach(async () => {
     restoreFetch?.()
     restoreFetch = undefined
-    await clearPluginConfig()
+    await clearOpencodeConfig()
+    await clearAuthJson()
   })
 
-  test("always injects the litellm-setup command", async () => {
+  test("config hook injects runtime placeholder when no auth/config is present", async () => {
+    restoreFetch = mockFetchFailure()
     const { default: plugin } = await import("../src/index.ts")
     const hooks = await plugin(makeCtx())
 
     const config: any = {}
     await hooks.config!(config)
 
-    expect(config.command?.["litellm-setup"]).toBeDefined()
+    expect(config.provider?.litellm).toBeDefined()
+    expect(config.provider.litellm.options.baseURL).toBe("http://localhost:4000/v1")
+    expect(config.provider.litellm.models.setup).toBeDefined()
   })
 
-  test("litellm-setup command template references litellm_configure tool", async () => {
+  test("config hook with no baseURL saved does not throw", async () => {
     const { default: plugin } = await import("../src/index.ts")
     const hooks = await plugin(makeCtx())
 
     const config: any = {}
-    await hooks.config!(config)
-
-    expect(config.command?.["litellm-setup"].template).toContain("litellm_configure")
+    await expect(hooks.config!(config)).resolves.toBeUndefined()
   })
 
-  test("litellm-setup command has a description", async () => {
-    const { default: plugin } = await import("../src/index.ts")
-    const hooks = await plugin(makeCtx())
-
-    const config: any = {}
-    await hooks.config!(config)
-
-    expect(config.command?.["litellm-setup"].description).toBeTruthy()
-  })
-
-  test("does not inject litellm provider when no baseURL is saved", async () => {
-    const { default: plugin } = await import("../src/index.ts")
-    const hooks = await plugin(makeCtx())
-
-    const config: any = {}
-    await hooks.config!(config)
-
-    expect(config.provider?.litellm).toBeUndefined()
-  })
-
-  test("injects litellm provider when baseURL is saved and models are reachable", async () => {
-    await writePluginConfig("http://my-host:4000")
+  test("config hook injects provider when baseURL is present and fetch succeeds", async () => {
+    await writeOpencodeConfig({
+      provider: {
+        litellm: {
+          options: { baseURL: "http://my-host:4000/v1" },
+        },
+      },
+    })
     restoreFetch = mockFetchSuccess()
 
     const { default: plugin } = await import("../src/index.ts")
@@ -325,8 +323,14 @@ describe("config hook", () => {
     expect(config.provider.litellm.npm).toBe("@ai-sdk/openai-compatible")
   })
 
-  test("sets baseURL in provider options with /v1 appended", async () => {
-    await writePluginConfig("http://my-host:4000")
+  test("config hook sets baseURL in provider options with /v1 appended", async () => {
+    await writeOpencodeConfig({
+      provider: {
+        litellm: {
+          options: { baseURL: "http://my-host:4000/v1" },
+        },
+      },
+    })
     restoreFetch = mockFetchSuccess()
 
     const { default: plugin } = await import("../src/index.ts")
@@ -338,8 +342,14 @@ describe("config hook", () => {
     expect(config.provider.litellm.options.baseURL).toBe("http://my-host:4000/v1")
   })
 
-  test("provider models map contains all ids returned by LiteLLM", async () => {
-    await writePluginConfig("http://my-host:4000")
+  test("config hook maps all fetched model IDs to models", async () => {
+    await writeOpencodeConfig({
+      provider: {
+        litellm: {
+          options: { baseURL: "http://my-host:4000/v1" },
+        },
+      },
+    })
     restoreFetch = mockFetchSuccess()
 
     const { default: plugin } = await import("../src/index.ts")
@@ -352,8 +362,14 @@ describe("config hook", () => {
     expect(modelKeys).toEqual(MOCK_MODEL_IDS)
   })
 
-  test("each model entry has matching id and name", async () => {
-    await writePluginConfig("http://my-host:4000")
+  test("config hook each model entry has matching id and name", async () => {
+    await writeOpencodeConfig({
+      provider: {
+        litellm: {
+          options: { baseURL: "http://my-host:4000/v1" },
+        },
+      },
+    })
     restoreFetch = mockFetchSuccess()
 
     const { default: plugin } = await import("../src/index.ts")
@@ -368,8 +384,14 @@ describe("config hook", () => {
     }
   })
 
-  test("does not set apiKey in options when no key is stored", async () => {
-    await writePluginConfig("http://my-host:4000")
+  test("config hook does not set apiKey when no key is stored", async () => {
+    await writeOpencodeConfig({
+      provider: {
+        litellm: {
+          options: { baseURL: "http://my-host:4000/v1" },
+        },
+      },
+    })
     restoreFetch = mockFetchSuccess()
 
     const { default: plugin } = await import("../src/index.ts")
@@ -381,12 +403,19 @@ describe("config hook", () => {
     expect(config.provider.litellm.options.apiKey).toBeUndefined()
   })
 
-  test("sets apiKey in options when a real key is stored", async () => {
-    await writePluginConfig("http://my-host:4000")
+  test("config hook sets apiKey when a real key is stored in auth.json", async () => {
+    await writeOpencodeConfig({
+      provider: {
+        litellm: {
+          options: { baseURL: "http://my-host:4000/v1" },
+        },
+      },
+    })
+    await writeAuthJson({ litellm: { key: "sk-real-key" } })
     restoreFetch = mockFetchSuccess()
 
     const { default: plugin } = await import("../src/index.ts")
-    const hooks = await plugin(makeCtx("sk-real-key"))
+    const hooks = await plugin(makeCtx())
 
     const config: any = {}
     await hooks.config!(config)
@@ -394,12 +423,19 @@ describe("config hook", () => {
     expect(config.provider.litellm.options.apiKey).toBe("sk-real-key")
   })
 
-  test("treats no-key sentinel as absent — apiKey not set in options", async () => {
-    await writePluginConfig("http://my-host:4000")
+  test("config hook treats no-key sentinel in auth.json as absent", async () => {
+    await writeOpencodeConfig({
+      provider: {
+        litellm: {
+          options: { baseURL: "http://my-host:4000/v1" },
+        },
+      },
+    })
+    await writeAuthJson({ litellm: { key: "no-key" } })
     restoreFetch = mockFetchSuccess()
 
     const { default: plugin } = await import("../src/index.ts")
-    const hooks = await plugin(makeCtx("no-key"))
+    const hooks = await plugin(makeCtx())
 
     const config: any = {}
     await hooks.config!(config)
@@ -407,8 +443,14 @@ describe("config hook", () => {
     expect(config.provider.litellm.options.apiKey).toBeUndefined()
   })
 
-  test("does not throw when LiteLLM is unreachable", async () => {
-    await writePluginConfig("http://my-host:4000")
+  test("config hook does not throw when LiteLLM is unreachable", async () => {
+    await writeOpencodeConfig({
+      provider: {
+        litellm: {
+          options: { baseURL: "http://my-host:4000/v1" },
+        },
+      },
+    })
     restoreFetch = mockFetchFailure()
 
     const { default: plugin } = await import("../src/index.ts")
@@ -418,8 +460,14 @@ describe("config hook", () => {
     await expect(hooks.config!(config)).resolves.toBeUndefined()
   })
 
-  test("does not inject provider when LiteLLM is unreachable", async () => {
-    await writePluginConfig("http://my-host:4000")
+  test("config hook injects placeholder provider when LiteLLM is unreachable", async () => {
+    await writeOpencodeConfig({
+      provider: {
+        litellm: {
+          options: { baseURL: "http://my-host:4000/v1" },
+        },
+      },
+    })
     restoreFetch = mockFetchFailure()
 
     const { default: plugin } = await import("../src/index.ts")
@@ -428,8 +476,95 @@ describe("config hook", () => {
     const config: any = {}
     await hooks.config!(config)
 
-    expect(config.provider?.litellm).toBeUndefined()
+    // Provider must always appear in runtime config so /connect shows it on
+    // the first launch, even if the proxy is unreachable.
+    expect(config.provider?.litellm).toBeDefined()
+    expect(config.provider.litellm.models.setup).toBeDefined()
   })
 })
 
-// Integration tests live in tests/integration.test.ts
+// ─── chat.params hook ──────────────────────────────────────────────────────
+
+function makeChatParamsInput(providerID: string, sessionID = "ses_01TESTID") {
+  return {
+    sessionID,
+    agent: "coder",
+    model: { providerID, modelID: "gpt-4o" } as any,
+    provider: { source: "config", info: { id: providerID }, options: {} } as any,
+    message: {} as any,
+  }
+}
+
+describe("chat.params hook", () => {
+  test("sets metadata.session_id to sessionID for litellm provider", async () => {
+    const { default: plugin } = await import("../src/index.ts")
+    const hooks = await plugin(makeCtx())
+
+    const input = makeChatParamsInput("litellm", "ses_abc123")
+    const output: any = { temperature: 1, topP: 1, topK: 40, maxOutputTokens: undefined, options: {} }
+
+    await hooks["chat.params"]!(input, output)
+
+    expect(output.options.metadata.session_id).toBe("ses_abc123")
+  })
+
+  test("is a no-op for non-litellm providers", async () => {
+    const { default: plugin } = await import("../src/index.ts")
+    const hooks = await plugin(makeCtx())
+
+    const input = makeChatParamsInput("openai")
+    const output: any = { temperature: 1, topP: 1, topK: 40, maxOutputTokens: undefined, options: {} }
+
+    await hooks["chat.params"]!(input, output)
+
+    expect(output.options.metadata).toBeUndefined()
+  })
+
+  test("preserves existing metadata keys alongside session_id", async () => {
+    const { default: plugin } = await import("../src/index.ts")
+    const hooks = await plugin(makeCtx())
+
+    const input = makeChatParamsInput("litellm", "ses_xyz")
+    const output: any = {
+      temperature: 1, topP: 1, topK: 40, maxOutputTokens: undefined,
+      options: { metadata: { trace_id: "existing-trace" } },
+    }
+
+    await hooks["chat.params"]!(input, output)
+
+    expect(output.options.metadata.trace_id).toBe("existing-trace")
+    expect(output.options.metadata.session_id).toBe("ses_xyz")
+  })
+
+  test("preserves existing non-metadata options keys", async () => {
+    const { default: plugin } = await import("../src/index.ts")
+    const hooks = await plugin(makeCtx())
+
+    const input = makeChatParamsInput("litellm", "ses_xyz")
+    const output: any = {
+      temperature: 1, topP: 1, topK: 40, maxOutputTokens: undefined,
+      options: { user: "user-123" },
+    }
+
+    await hooks["chat.params"]!(input, output)
+
+    expect(output.options.user).toBe("user-123")
+    expect(output.options.metadata.session_id).toBe("ses_xyz")
+  })
+
+  test("emits a log line containing the session_id", async () => {
+    const ctx = makeCtx()
+    const { default: plugin } = await import("../src/index.ts")
+    const hooks = await plugin(ctx)
+
+    const input = makeChatParamsInput("litellm", "ses_logtest")
+    const output: any = { temperature: 1, topP: 1, topK: 40, maxOutputTokens: undefined, options: {} }
+
+    await hooks["chat.params"]!(input, output)
+
+    const logCalls: string[] = (ctx.client.app.log as any).mock.calls.map(
+      (call: any[]) => call[0]?.body?.message ?? ""
+    )
+    expect(logCalls.some((msg: string) => msg.includes("ses_logtest"))).toBe(true)
+  })
+})

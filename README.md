@@ -4,7 +4,7 @@ OpenCode plugin that auto-discovers models from a [LiteLLM](https://litellm.ai) 
 
 ## Install
 
-Add to your `~/.config/opencode/opencode.json` (global) or project `opencode.json`:
+Add to your `~/.config/opencode/opencode.json`:
 
 ```json
 {
@@ -12,23 +12,75 @@ Add to your `~/.config/opencode/opencode.json` (global) or project `opencode.jso
 }
 ```
 
-## Configure
+## Setup
 
-### Option A — OpenCode UI (recommended)
-
-After installing, open OpenCode's provider settings, find **LiteLLM**, and enter your credentials. Models will auto-populate on next startup.
-
-### Option B — Environment variables
-
-```bash
-export LITELLM_BASE_URL=http://your-litellm-host:4000
-export LITELLM_API_KEY=sk-your-key
-```
-
-`LITELLM_BASE_URL` defaults to `http://localhost:4000` if not set.
-
-If neither credentials nor `LITELLM_BASE_URL` are set, the plugin silently does nothing so OpenCode starts cleanly.
+1. Open OpenCode and run `/connect litellm`.
+2. Enter your LiteLLM proxy URL (e.g., `http://localhost:4000`).
+3. Enter your API key (skip/leave blank if your proxy has no authentication).
+4. Restart OpenCode — your LiteLLM models will appear in the model picker automatically.
 
 ## How it works
 
-On startup, the plugin calls `GET /v1/models` on your LiteLLM proxy and injects the results as an OpenAI-compatible provider into OpenCode's runtime config. Models appear in the model picker using the friendly aliases you configured in LiteLLM (e.g., `claude-sonnet`, `deepseek-coder-v2`).
+On every startup the plugin calls `GET /v1/models` on your LiteLLM proxy and injects the results as an OpenAI-compatible provider into OpenCode's runtime config. Models appear in the model picker using the IDs returned by your proxy (e.g. `claude-sonnet`, `deepseek-coder-v2`).
+
+If the proxy is unreachable or the API key is missing, the plugin silently does nothing so OpenCode starts cleanly.
+
+## Development
+
+### Prerequisites
+
+- **Bun** — runtime, package manager, and test runner. Install from [bun.sh](https://bun.sh).
+- **OpenCode** — install globally: `npm install -g opencode-ai`
+
+### Setup
+
+```bash
+git clone https://github.com/your-org/opencode-litellm
+cd opencode-litellm
+bun install
+```
+
+Open the repo in OpenCode. The `.opencode/opencode.json` in this repo loads the plugin directly from `src/index.ts`:
+
+```json
+{
+  "plugin": ["../src/index.ts"]
+}
+```
+
+Any changes to `src/index.ts` take effect the next time you restart OpenCode — no build step required.
+
+### Logs
+
+The plugin logs via `client.app.log()` into OpenCode's standard log file. Use the `/read-plugin-logs` command inside OpenCode to filter and view plugin-specific output. Log files are at:
+
+- **Windows:** `%USERPROFILE%\.local\share\opencode\log\<timestamp>.log`
+- **macOS/Linux:** `~/.local/share/opencode/log/<timestamp>.log`
+
+### Running tests
+
+```bash
+bun test                                    # all tests
+bun test --watch                            # watch mode
+bun test tests/plugin.test.ts              # unit only
+bun test tests/integration.test.ts         # integration only
+bun test --testNamePattern "config hook"   # filter by name
+```
+
+### Project structure
+
+```
+src/index.ts                      # plugin — auth, tool, and config hooks
+.opencode/opencode.json           # loads plugin from ../src/index.ts for development
+tests/plugin.test.ts              # unit tests (mocked fetch)
+tests/integration.test.ts         # integration tests (real in-process mock server)
+tests/e2e/run.ts                  # E2E runner (spawns opencode process)
+tests/fixtures/litellm-server.ts  # mock LiteLLM HTTP server
+```
+
+### Publishing
+
+```bash
+bun run build   # compiles src/ to dist/
+npm publish
+```

@@ -6,25 +6,24 @@
  *
  * Requires opencode-ai to be installed globally (npm install -g opencode-ai).
  *
- * Flow A — /litellm-setup simulation:
- *   Runs opencode with test-model-setup, which causes the mock to return a
- *   litellm_configure tool call. OpenCode executes the tool, writing
- *   litellm-plugin.json. Asserts the file contains the correct baseURL.
+ * Seeding: opencode.json is pre-populated with provider.litellm pointing at the mock.
+ * The config hook will run on startup and discover models from the mock.
  *
- * Flow B — model routing:
+ * Flow — model routing:
  *   Runs opencode with test-model-chat. The mock returns a plain text SSE
- *   response. Asserts stdout contains the expected text.
+ *   response. Asserts the request reached the mock.
  */
 
 import { startMockLiteLLM } from "../fixtures/litellm-server.ts"
-import { writeFileSync, readFileSync, mkdirSync } from "fs"
+import { writeFileSync, rmSync, mkdirSync } from "fs"
 import { join } from "path"
 import { homedir } from "os"
 
 const pluginVersion = process.argv[2] ?? "opencode-litellm"
 const configDir = join(homedir(), ".config", "opencode")
-const pluginConfigPath = join(configDir, "litellm-plugin.json")
 const opencodeConfigPath = join(configDir, "opencode.json")
+const authDir = join(homedir(), ".local", "share", "opencode")
+const authJsonPath = join(authDir, "auth.json")
 
 function assert(condition: boolean, message: string): void {
   if (!condition) {
@@ -48,46 +47,45 @@ console.log(`Mock LiteLLM server: ${mock.url}`)
 console.log(`Plugin version: ${pluginVersion}\n`)
 
 try {
+  // Clean up any existing auth.json that might interfere
+  try { rmSync(authJsonPath) } catch { /* may not exist */ }
+
+  // Seed opencode.json with provider.litellm pointing at mock
   mkdirSync(configDir, { recursive: true })
-  writeFileSync(opencodeConfigPath, JSON.stringify({ plugin: [pluginVersion] }))
-  // Pre-seed plugin config so the litellm provider is available before Flow A runs.
-  writeFileSync(pluginConfigPath, JSON.stringify({ baseURL: mock.url }))
+  writeFileSync(opencodeConfigPath, JSON.stringify({
+    plugin: [pluginVersion],
+    provider: {
+      litellm: {
+        npm: "@ai-sdk/openai-compatible",
+        name: "LiteLLM",
+        options: { baseURL: `${mock.url}/v1` },
+        models: {
+          "test-model-chat": { id: "test-model-chat", name: "test-model-chat" },
+          "test-model-code": { id: "test-model-code", name: "test-model-code" },
+          "test-model-vision": { id: "test-model-vision", name: "test-model-vision" },
+        },
+      },
+    },
+  }, null, 2))
 
-  // ── Flow A: /litellm-setup simulation ─────────────────────────────────────
-  console.log("Flow A: /litellm-setup simulation (mock returns litellm_configure tool call)...")
-
-  const a = runOpenCode([
-    "run",
-    "--model", "litellm/test-model-setup",
-    "Configure my LiteLLM proxy.",
-  ])
-  assert(a.ok, `opencode run exited ${a.code}:\n${a.stderr}`)
-
-  const saved = JSON.parse(readFileSync(pluginConfigPath, "utf8")) as { baseURL?: string }
-  assert(
-    saved.baseURL === mock.url,
-    `litellm-plugin.json has wrong baseURL.\n  expected: ${mock.url}\n  got:      ${saved.baseURL}`
-  )
-  console.log("Flow A: PASSED\n")
-
-  // ── Flow B: model routing ─────────────────────────────────────────────────
-  console.log("Flow B: model routing (mock returns plain text)...")
+  // ── Flow: model routing ────────────────────────────────────────────────────
+  console.log("Flow: model routing (mock returns plain text)...")
 
   const chatRequestsBefore = mock.chatRequests.length
 
-  const b = runOpenCode([
+  const result = runOpenCode([
     "run",
     "--model", "litellm/test-model-chat",
     "say hello",
   ])
-  assert(b.ok, `opencode run exited ${b.code}:\n${b.stderr}`)
+  assert(result.ok, `opencode run exited ${result.code}:\n${result.stderr}`)
 
   // opencode run renders to the terminal, not stdout when piped — assert
   // on the mock's request log instead: the request must have reached the mock.
   const newRequests = mock.chatRequests.slice(chatRequestsBefore)
   const chatHit = newRequests.some((r) => r.model === "test-model-chat")
   assert(chatHit, `No chat completion request for test-model-chat reached the mock.\n  requests: ${JSON.stringify(newRequests)}`)
-  console.log("Flow B: PASSED\n")
+  console.log("Flow: PASSED\n")
 
 } finally {
   mock.stop()

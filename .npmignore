@@ -1,0 +1,6 @@
+.claude/
+.opencode/
+node_modules/
+tests/
+*.log
+*.lock
