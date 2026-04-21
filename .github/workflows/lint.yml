@@ -1,0 +1,42 @@
+name: Lint & Format
+
+on:
+  push:
+    branches: ["master"]
+  pull_request:
+    paths:
+      - "src/**"
+      - ".github/workflows/lint.yml"
+
+jobs:
+  lint:
+    name: TypeScript & Code Quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: oven-sh/setup-bun@v2
+        with:
+          cache: "npm"
+      
+      - run: bun install
+      
+      - name: Check TypeScript types
+        run: bun run typecheck
+      
+      # Add linting commands here when available
+      # - run: bun run lint
+
+  build:
+    name: Build verification
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: oven-sh/setup-bun@v2
+      
+      - run: bun install
+      
+      - name: Verify build succeeds
+        run: bun run build

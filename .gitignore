@@ -1,5 +1,28 @@
+# Dependencies
 node_modules/
 .venv/
 *.egg-info/
 __pycache__/
+.env
+.env.*
+*.pem
+*.key
 .claude/settings.local.json
+
+# Build artifacts
+dist/
+build/
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# OS
+Thumbs.db

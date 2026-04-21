@@ -1,6 +1,29 @@
-.claude/
-.opencode/
+# Node modules
 node_modules/
-tests/
+
+# Environment files
+.env
+.env.*
+*.pem
+*.key
+
+# Development
+.git
+.github
+.vscode
+.idea
+.DS_Store
+
+# Local configs
+.opencode/*.json!opencode.json
+.claude
+
+# Test fixtures (keep minimal)
+tests/fixtures/*.ts!mock-server.ts
+
+# Logs
 *.log
-*.lock
+logs/
+
+# Large files or unnecessary assets
+dist/test*
