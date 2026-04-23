@@ -75,7 +75,6 @@ src/index.ts                      # plugin — auth, config, and chat.params hoo
 .opencode/opencode.json           # loads plugin from ../src/index.ts for development
 tests/plugin.test.ts              # unit tests (mocked fetch)
 tests/integration.test.ts         # integration tests (real in-process mock server)
-tests/e2e/run.ts                  # E2E runner (spawns opencode process)
 tests/fixtures/litellm-server.ts  # mock LiteLLM HTTP server
 ```
 
